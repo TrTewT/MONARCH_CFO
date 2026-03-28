@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from monarchmoney import MonarchMoney
+from monarchmoney.monarchmoney import MonarchMoneyEndpoints
 from monarch_mcp_server.secure_session import secure_session
 
 # Configure logging
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+
+# Monarch Money migrated from api.monarchmoney.com to api.monarch.com (Jan 2026)
+# The library hasn't been updated, so we patch it here.
+MonarchMoneyEndpoints.BASE_URL = "https://api.monarch.com"
 
 # Read host/port from env — FastMCP uses these in the constructor, not in run()
 _host = os.getenv("HOST", "0.0.0.0")
