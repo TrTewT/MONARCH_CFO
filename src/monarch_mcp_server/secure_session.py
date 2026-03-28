@@ -1,8 +1,8 @@
 """
 Secure session management for Monarch Money MCP Server.
 
-Supports MONARCH_TOKEN env var for cloud deployment (Render, etc.)
-and falls back to system keyring for local development.
+On Windows: uses keyring (Windows Credential Manager) for token storage.
+On Linux/Cloud (Render): uses MONARCH_TOKEN environment variable only.
 """
 
 import logging
@@ -10,32 +10,28 @@ import os
 from typing import Optional
 from monarchmoney import MonarchMoney
 
-try:
-    import keyring
-
-    _KEYRING_AVAILABLE = True
-except Exception:
-    keyring = None  # type: ignore[assignment]
-    _KEYRING_AVAILABLE = False
-
 logger = logging.getLogger(__name__)
 
+# Keyring service identifiers
 KEYRING_SERVICE = "com.mcp.monarch-mcp-server"
 KEYRING_USERNAME = "monarch-token"
 
+# Try to import keyring — it may not be available on Linux/cloud environments
+try:
+    import keyring
+    _HAS_KEYRING = True
+except Exception:
+    _HAS_KEYRING = False
+    logger.info("keyring not available — using MONARCH_TOKEN env var only (cloud mode)")
+
 
 class SecureMonarchSession:
-    """Manages Monarch Money sessions securely.
-
-    Priority order for token resolution:
-      1. MONARCH_TOKEN environment variable (cloud / Render)
-      2. System keyring (local desktop)
-    """
+    """Manages Monarch Money sessions securely."""
 
     def save_token(self, token: str) -> None:
         """Save the authentication token to the system keyring."""
-        if not _KEYRING_AVAILABLE:
-            logger.warning("Keyring not available -- token not persisted")
+        if not _HAS_KEYRING:
+            logger.warning("keyring not available — cannot save token locally")
             return
 
         try:
@@ -43,33 +39,38 @@ class SecureMonarchSession:
             logger.info("Token saved securely to keyring")
             self._cleanup_old_session_files()
         except Exception as e:
-            logger.warning(f"Could not save token to keyring: {e}")
+            logger.error(f"Failed to save token to keyring: {e}")
+            raise
 
     def load_token(self) -> Optional[str]:
-        """Load the authentication token (env var first, then keyring)."""
+        """Load the authentication token.
+
+        Priority order:
+        1. MONARCH_TOKEN environment variable (cloud/Render.com deployment)
+        2. Windows Credential Manager via keyring (local Windows deployment)
+        """
+        # 1. Check environment variable first (cloud deployment)
         env_token = os.getenv("MONARCH_TOKEN")
-        if env_token:
-            logger.info("Token loaded from MONARCH_TOKEN env var")
-            return env_token
+        if env_token and env_token.strip():
+            logger.info("Token loaded from MONARCH_TOKEN environment variable")
+            return env_token.strip()
 
-        if not _KEYRING_AVAILABLE:
-            logger.info("Keyring not available and MONARCH_TOKEN not set")
-            return None
+        # 2. Fall back to keyring (local Windows deployment)
+        if _HAS_KEYRING:
+            try:
+                token = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+                if token:
+                    logger.info("Token loaded from keyring")
+                    return token
+            except Exception as e:
+                logger.error(f"Failed to load token from keyring: {e}")
 
-        try:
-            token = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
-            if token:
-                logger.info("Token loaded from keyring")
-                return token
-            logger.info("No token found in keyring")
-            return None
-        except Exception as e:
-            logger.warning(f"Keyring access failed: {e}")
-            return None
+        logger.info("No token found in MONARCH_TOKEN env var or keyring")
+        return None
 
     def delete_token(self) -> None:
         """Delete the authentication token from the system keyring."""
-        if not _KEYRING_AVAILABLE:
+        if not _HAS_KEYRING:
             return
 
         try:
@@ -116,7 +117,6 @@ class SecureMonarchSession:
                         logger.info(f"Cleaned up old session file: {path}")
                     elif os.path.isdir(path) and not os.listdir(path):
                         os.rmdir(path)
-                        logger.info(f"Cleaned up empty session directory: {path}")
             except Exception as e:
                 logger.warning(f"Could not clean up {path}: {e}")
 

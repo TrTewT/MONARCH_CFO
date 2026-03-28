@@ -3,8 +3,8 @@
 import os
 import logging
 import asyncio
-import json
 from typing import Optional
+import json
 from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
@@ -19,8 +19,22 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Initialize FastMCP server
-mcp = FastMCP("Monarch Money MCP Server")
+# Read host/port from env — FastMCP uses these in the constructor, not in run()
+_host = os.getenv("HOST", "0.0.0.0")
+_port = int(os.getenv("PORT", "8000"))
+
+# Initialize FastMCP server with host/port for HTTP transports
+mcp = FastMCP(
+    "Monarch Money MCP Server",
+    host=_host,
+    port=_port,
+)
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request):
+    from starlette.responses import JSONResponse
+    return JSONResponse({"status": "ok"})
 
 
 def run_async(coro):
@@ -41,11 +55,10 @@ def run_async(coro):
 
 async def get_monarch_client() -> MonarchMoney:
     """Get or create MonarchMoney client instance using secure session storage."""
-    # Try to get authenticated client from secure session
     client = secure_session.get_authenticated_client()
 
     if client is not None:
-        logger.info("â Using authenticated client from secure keyring storage")
+        logger.info("Using authenticated client from token storage")
         return client
 
     # If no secure session, try environment credentials
@@ -56,84 +69,64 @@ async def get_monarch_client() -> MonarchMoney:
         try:
             client = MonarchMoney()
             await client.login(email, password)
-            logger.info(
-                "Successfully logged into Monarch Money with environment credentials"
-            )
-
-            # Save the session securely
+            logger.info("Successfully logged in with environment credentials")
             secure_session.save_authenticated_session(client)
-
             return client
         except Exception as e:
             logger.error(f"Failed to login to Monarch Money: {e}")
             raise
 
-    raise RuntimeError("ð Authentication needed! Run: python login_setup.py")
+    raise RuntimeError(
+        "Authentication needed! Set MONARCH_TOKEN env var or run: python login_setup.py"
+    )
 
 
 @mcp.tool()
 def setup_authentication() -> str:
     """Get instructions for setting up secure authentication with Monarch Money."""
-    return """ð Monarch Money - One-Time Setup
+    return """Monarch Money - Authentication Setup
 
-1ï¸â£ Open Terminal and run:
-   python login_setup.py
+Option A (Cloud / Render.com):
+  Set the MONARCH_TOKEN environment variable in your Render dashboard.
+  Get your token from app.monarch.com browser console:
+    const raw = localStorage.getItem('persist:root');
+    const user = JSON.parse(JSON.parse(raw)['user']);
+    console.log(user.token);
 
-2ï¸â£ Enter your Monarch Money credentials when prompted
-   â¢ Email and password
-   â¢ 2FA code if you have MFA enabled
+Option B (Local / Windows):
+  Run: python login_setup.py
+  Or run ACTIVATE.bat to save a browser-extracted token.
 
-3ï¸â£ Session will be saved automatically and last for weeks
-
-4ï¸â£ Start using Monarch tools in Claude Desktop:
-   â¢ get_accounts - View all accounts
-   â¢ get_transactions - Recent transactions
-   â¢ get_budgets - Budget information
-
-â Session persists across Claude restarts
-â No need to re-authenticate frequently
-â All credentials stay secure in terminal"""
+Once authenticated, use:
+  - get_accounts: View all accounts
+  - get_transactions: Recent transactions
+  - get_budgets: Budget information"""
 
 
 @mcp.tool()
 def check_auth_status() -> str:
     """Check if already authenticated with Monarch Money."""
     try:
-        # Check if we have a token in the keyring
-        token = secure_session.load_token()
-        if token:
-            status = "â Authentication token found in secure keyring storage\n"
+        env_token = os.getenv("MONARCH_TOKEN")
+        if env_token and env_token.strip():
+            status = "Authentication token found in MONARCH_TOKEN environment variable\n"
+            status += f"  Token length: {len(env_token.strip())} chars\n"
         else:
-            status = "â No authentication token found in keyring\n"
+            token = secure_session.load_token()
+            if token:
+                status = "Authentication token found in local storage (keyring)\n"
+            else:
+                status = "No authentication token found\n"
+                status += "  -> On Render.com: set MONARCH_TOKEN env var in the dashboard\n"
+                status += "  -> On Windows: run ACTIVATE.bat to save token to keyring\n"
 
-        email = os.getenv("MONARCH_EMAIL")
-        if email:
-            status += f"ð§ Environment email: {email}\n"
-
-        status += (
-            "\nð¡ Try get_accounts to test connection or run login_setup.py if needed."
-        )
+        transport = os.getenv("MCP_TRANSPORT", "stdio")
+        status += f"Transport mode: {transport}\n"
+        status += "\nTry get_accounts to test the live connection."
 
         return status
     except Exception as e:
         return f"Error checking auth status: {str(e)}"
-
-
-@mcp.tool()
-def debug_session_loading() -> str:
-    """Debug keyring session loading issues."""
-    try:
-        # Check keyring access
-        token = secure_session.load_token()
-        if token:
-            return f"â Token found in keyring (length: {len(token)})"
-        else:
-            return "â No token found in keyring. Run login_setup.py to authenticate."
-    except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        return f"â Keyring access failed:\nError: {str(e)}\nType: {type(e)}\nTraceback:\n{error_details}"
 
 
 @mcp.tool()
@@ -147,7 +140,6 @@ def get_accounts() -> str:
 
         accounts = run_async(_get_accounts())
 
-        # Format accounts for display
         account_list = []
         for account in accounts.get("accounts", []):
             account_info = {
@@ -191,7 +183,6 @@ def get_transactions(
         async def _get_transactions():
             client = await get_monarch_client()
 
-            # Build filters
             filters = {}
             if start_date:
                 filters["start_date"] = start_date
@@ -204,7 +195,6 @@ def get_transactions(
 
         transactions = run_async(_get_transactions())
 
-        # Format transactions for display
         transaction_list = []
         for txn in transactions.get("allTransactions", {}).get("results", []):
             transaction_info = {
@@ -240,7 +230,6 @@ def get_budgets() -> str:
 
         budgets = run_async(_get_budgets())
 
-        # Format budgets for display
         budget_list = []
         for budget in budgets.get("budgets", []):
             budget_info = {
@@ -422,61 +411,26 @@ def refresh_accounts() -> str:
         return f"Error refreshing accounts: {str(e)}"
 
 
-def _run_sse_server():
-    """Start the server with SSE transport using Starlette + uvicorn."""
-    import uvicorn
-    from mcp.server.sse import SseServerTransport
-    from starlette.applications import Starlette
-    from starlette.routing import Mount, Route
-    from starlette.responses import JSONResponse, Response
-
-    sse = SseServerTransport("/messages/")
-
-    async def handle_sse(request):
-        async with sse.connect_sse(
-            request.scope, request.receive, request._send
-        ) as (read_stream, write_stream):
-            await mcp._mcp_server.run(
-                read_stream,
-                write_stream,
-                mcp._mcp_server.create_initialization_options(),
-            )
-        return Response()
-
-    async def health(request):
-        return JSONResponse({"status": "ok"})
-
-    starlette_app = Starlette(
-        routes=[
-            Route("/health", endpoint=health),
-            Route("/sse", endpoint=handle_sse),
-            Mount("/messages/", app=sse.handle_post_message),
-        ]
-    )
-
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8000"))
-    logger.info(f"SSE server listening on {host}:{port}")
-    uvicorn.run(starlette_app, host=host, port=port)
-
-
 def main():
-    """Main entry point for the server."""
-    transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
-    logger.info(
-        f"Starting Monarch Money MCP Server (transport={transport})..."
-    )
+    """Main entry point for the server.
 
-    try:
-        if transport == "sse":
-            _run_sse_server()
-        else:
-            mcp.run(transport="stdio")
-    except Exception as e:
-        logger.error(f"Failed to run server: {str(e)}")
-        raise
+    Transport is controlled by the MCP_TRANSPORT environment variable:
+    - "stdio" (default): local mode for Claude Desktop
+    - "streamable-http": cloud mode for Render.com / remote access
+    - "sse": alternative cloud mode using Server-Sent Events
+
+    Host/port are configured via HOST and PORT env vars (default: 0.0.0.0:8000),
+    and are set in the FastMCP constructor above.
+    """
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    logger.info(f"MCP_TRANSPORT={transport}")
+    logger.info(f"Listening on {_host}:{_port}")
+    logger.info(f"Starting Monarch Money MCP Server ({transport} mode)...")
+
+    mcp.run(transport=transport)
 
 
+# Export for mcp run
 app = mcp
 
 if __name__ == "__main__":

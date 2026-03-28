@@ -92,4 +92,4 @@ logs/
 # Temporary files
 tmp/
 temp/
-.tmp/.monarch_token_setup
+.tmp/
