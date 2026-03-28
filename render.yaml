@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: monarch-mcp-server
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python src/monarch_mcp_server/server.py
+    healthCheckPath: /health
+    envVars:
+      - key: MCP_TRANSPORT
+        value: sse
+      - key: HOST
+        value: "0.0.0.0"
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: MONARCH_TOKEN
+        sync: false

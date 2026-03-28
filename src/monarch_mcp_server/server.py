@@ -3,18 +3,13 @@
 import os
 import logging
 import asyncio
-from typing import Any, Dict, List, Optional, Union
-from datetime import datetime, date
 import json
-import threading
+from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
-from mcp.server.auth.provider import AccessTokenT
 from mcp.server.fastmcp import FastMCP
-import mcp.types as types
-from monarchmoney import MonarchMoney, RequireMFAException
-from pydantic import BaseModel, Field
+from monarchmoney import MonarchMoney
 from monarch_mcp_server.secure_session import secure_session
 
 # Configure logging
@@ -42,16 +37,6 @@ def run_async(coro):
     with ThreadPoolExecutor() as executor:
         future = executor.submit(_run)
         return future.result()
-
-
-class MonarchConfig(BaseModel):
-    """Configuration for Monarch Money connection."""
-
-    email: Optional[str] = Field(default=None, description="Monarch Money email")
-    password: Optional[str] = Field(default=None, description="Monarch Money password")
-    session_file: str = Field(
-        default="monarch_session.json", description="Session file path"
-    )
 
 
 async def get_monarch_client() -> MonarchMoney:
@@ -437,40 +422,61 @@ def refresh_accounts() -> str:
         return f"Error refreshing accounts: {str(e)}"
 
 
+def _run_sse_server():
+    """Start the server with SSE transport using Starlette + uvicorn."""
+    import uvicorn
+    from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.routing import Mount, Route
+    from starlette.responses import JSONResponse, Response
+
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request):
+        async with sse.connect_sse(
+            request.scope, request.receive, request._send
+        ) as (read_stream, write_stream):
+            await mcp._mcp_server.run(
+                read_stream,
+                write_stream,
+                mcp._mcp_server.create_initialization_options(),
+            )
+        return Response()
+
+    async def health(request):
+        return JSONResponse({"status": "ok"})
+
+    starlette_app = Starlette(
+        routes=[
+            Route("/health", endpoint=health),
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+        ]
+    )
+
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    logger.info(f"SSE server listening on {host}:{port}")
+    uvicorn.run(starlette_app, host=host, port=port)
+
+
 def main():
-    """Main entry point for the server.
+    """Main entry point for the server."""
+    transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
+    logger.info(
+        f"Starting Monarch Money MCP Server (transport={transport})..."
+    )
 
-    Transport is controlled by the MCP_TRANSPORT environment variable:
-    - "stdio" (default): local mode for Claude Desktop
-    - "streamable-http": cloud mode for Render.com / remote access
-    - "sse": alternative cloud mode using Server-Sent Events
-    """
-    transport = os.getenv("MCP_TRANSPORT", "stdio")
-    logger.info(f"MCP_TRANSPORT={transport}")
-
-    if transport in ("streamable-http", "sse"):
-        host = os.getenv("HOST", "0.0.0.0")
-        port = int(os.getenv("PORT", "8000"))
-        logger.info(
-            f"Starting Monarch Money MCP Server ({transport} mode) on {host}:{port}..."
-        )
-        try:
-            mcp.run(transport=transport, host=host, port=port)
-        except Exception as e:
-            logger.error(f"Failed to run {transport} server: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            raise
-    else:
-        logger.info("Starting Monarch Money MCP Server (stdio mode)...")
-        try:
-            mcp.run()
-        except Exception as e:
-            logger.error(f"Failed to run stdio server: {str(e)}")
-            raise
+    try:
+        if transport == "sse":
+            _run_sse_server()
+        else:
+            mcp.run(transport="stdio")
+    except Exception as e:
+        logger.error(f"Failed to run server: {str(e)}")
+        raise
 
 
-# Export for mcp run
 app = mcp
 
 if __name__ == "__main__":
