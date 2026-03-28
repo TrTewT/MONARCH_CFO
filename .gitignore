@@ -84,6 +84,7 @@ mm_session*
 token.json
 credentials.json
 refresh_token.txt
+.monarch_token_setup
 
 # Logs
 *.log

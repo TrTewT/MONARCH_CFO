@@ -1,0 +1,15 @@
+# Normalize line endings to LF in the repo, checkout as native (CRLF on Windows)
+* text=auto
+
+# Force LF for scripts that run on Linux (Render)
+*.py text eol=lf
+*.txt text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+
+# Keep Windows scripts as CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
