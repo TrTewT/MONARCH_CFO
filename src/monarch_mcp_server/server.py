@@ -60,7 +60,7 @@ async def get_monarch_client() -> MonarchMoney:
     client = secure_session.get_authenticated_client()
 
     if client is not None:
-        logger.info("✅ Using authenticated client from secure keyring storage")
+        logger.info("â Using authenticated client from secure keyring storage")
         return client
 
     # If no secure session, try environment credentials
@@ -83,31 +83,31 @@ async def get_monarch_client() -> MonarchMoney:
             logger.error(f"Failed to login to Monarch Money: {e}")
             raise
 
-    raise RuntimeError("🔐 Authentication needed! Run: python login_setup.py")
+    raise RuntimeError("ð Authentication needed! Run: python login_setup.py")
 
 
 @mcp.tool()
 def setup_authentication() -> str:
     """Get instructions for setting up secure authentication with Monarch Money."""
-    return """🔐 Monarch Money - One-Time Setup
+    return """ð Monarch Money - One-Time Setup
 
-1️⃣ Open Terminal and run:
+1ï¸â£ Open Terminal and run:
    python login_setup.py
 
-2️⃣ Enter your Monarch Money credentials when prompted
-   • Email and password
-   • 2FA code if you have MFA enabled
+2ï¸â£ Enter your Monarch Money credentials when prompted
+   â¢ Email and password
+   â¢ 2FA code if you have MFA enabled
 
-3️⃣ Session will be saved automatically and last for weeks
+3ï¸â£ Session will be saved automatically and last for weeks
 
-4️⃣ Start using Monarch tools in Claude Desktop:
-   • get_accounts - View all accounts
-   • get_transactions - Recent transactions
-   • get_budgets - Budget information
+4ï¸â£ Start using Monarch tools in Claude Desktop:
+   â¢ get_accounts - View all accounts
+   â¢ get_transactions - Recent transactions
+   â¢ get_budgets - Budget information
 
-✅ Session persists across Claude restarts
-✅ No need to re-authenticate frequently
-✅ All credentials stay secure in terminal"""
+â Session persists across Claude restarts
+â No need to re-authenticate frequently
+â All credentials stay secure in terminal"""
 
 
 @mcp.tool()
@@ -117,16 +117,16 @@ def check_auth_status() -> str:
         # Check if we have a token in the keyring
         token = secure_session.load_token()
         if token:
-            status = "✅ Authentication token found in secure keyring storage\n"
+            status = "â Authentication token found in secure keyring storage\n"
         else:
-            status = "❌ No authentication token found in keyring\n"
+            status = "â No authentication token found in keyring\n"
 
         email = os.getenv("MONARCH_EMAIL")
         if email:
-            status += f"📧 Environment email: {email}\n"
+            status += f"ð§ Environment email: {email}\n"
 
         status += (
-            "\n💡 Try get_accounts to test connection or run login_setup.py if needed."
+            "\nð¡ Try get_accounts to test connection or run login_setup.py if needed."
         )
 
         return status
@@ -141,14 +141,14 @@ def debug_session_loading() -> str:
         # Check keyring access
         token = secure_session.load_token()
         if token:
-            return f"✅ Token found in keyring (length: {len(token)})"
+            return f"â Token found in keyring (length: {len(token)})"
         else:
-            return "❌ No token found in keyring. Run login_setup.py to authenticate."
+            return "â No token found in keyring. Run login_setup.py to authenticate."
     except Exception as e:
         import traceback
 
         error_details = traceback.format_exc()
-        return f"❌ Keyring access failed:\nError: {str(e)}\nType: {type(e)}\nTraceback:\n{error_details}"
+        return f"â Keyring access failed:\nError: {str(e)}\nType: {type(e)}\nTraceback:\n{error_details}"
 
 
 @mcp.tool()
@@ -438,13 +438,36 @@ def refresh_accounts() -> str:
 
 
 def main():
-    """Main entry point for the server."""
-    logger.info("Starting Monarch Money MCP Server...")
-    try:
-        mcp.run()
-    except Exception as e:
-        logger.error(f"Failed to run server: {str(e)}")
-        raise
+    """Main entry point for the server.
+
+    Transport is controlled by the MCP_TRANSPORT environment variable:
+    - "stdio" (default): local mode for Claude Desktop
+    - "streamable-http": cloud mode for Render.com / remote access
+    - "sse": alternative cloud mode using Server-Sent Events
+    """
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    logger.info(f"MCP_TRANSPORT={transport}")
+
+    if transport in ("streamable-http", "sse"):
+        host = os.getenv("HOST", "0.0.0.0")
+        port = int(os.getenv("PORT", "8000"))
+        logger.info(
+            f"Starting Monarch Money MCP Server ({transport} mode) on {host}:{port}..."
+        )
+        try:
+            mcp.run(transport=transport, host=host, port=port)
+        except Exception as e:
+            logger.error(f"Failed to run {transport} server: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
+    else:
+        logger.info("Starting Monarch Money MCP Server (stdio mode)...")
+        try:
+            mcp.run()
+        except Exception as e:
+            logger.error(f"Failed to run stdio server: {str(e)}")
+            raise
 
 
 # Export for mcp run
